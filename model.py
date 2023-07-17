@@ -10,25 +10,9 @@ Authors: Alice Maria
 
 from datetime import datetime
 from PIL import Image
-import PIL.ImageFile
-from PIL.ExifTags import TAGS, GPSTAGS
 from typing import List, Tuple
 import tkintermapview as tkmv
-
-
-def converte_graus_para_decimais(tup: Tuple[int, int, int], ref: str) -> float:
-    '''
-    Função utilitária: converte coordenadas de
-    graus, minutos e segundos (tupla) para
-    decimais (float).
-    '''
-
-    if ref.upper() in ('N', 'E'):
-        s = 1
-    elif ref.upper() in ('S', 'W'):
-        s = -1
-
-    return s*(tup[0] + float(tup[1]/60) + float(tup[2]/3600))
+from utils import getGeotagging, getLatLon, getImageDateTime
 
 # Utilize herança ou composição com o objeto
 # retornado pelo método de classe "abre"
@@ -37,19 +21,18 @@ class Imagem:
     Representa uma imagem
     (classe principal do programa).
     '''
-
-    def __init__(self, nome):
+    def __init__(self, caminhoImagem: str):
         '''
         Inicializa um objeto imagem
         a partir do nome do seu arquivo.
         '''
-        self._nome = nome.rsplit('/')[-1] # nome do arquivo da imagem
+        self._nome = caminhoImagem.rsplit('/')[-1] # nome do arquivo da imagem
         self._data = None # data de captura da imagem
         self._lat = None # latitude da captura da imagem
         self._lon = None # longitude da captura da imagem
         self._cidade = None # cidade da captura da imagem
         self._pais = None # país da captura da imagem
-        self._img = self.abre(nome)
+        self._arquivo = Image.open(caminhoImagem)
         self._processa_EXIF()
 
     def __repr__(self) -> str:
@@ -67,43 +50,28 @@ class Imagem:
         Atribui valores aos atributos de instância correspondentes
         à latitude, longitude e data de captura.
         '''
-        tup_lat = None
-        tup_lon = None
-        ref_lat = None
-        ref_lon = None
+        exif_data = self._arquivo._getexif()
 
-        for c, v in self._img._getexif().items():
-            if TAGS[c] == 'GPSInfo':
-                for gps_cod, gps_dado in v.items():
-                    if GPSTAGS[gps_cod] == 'GPSLatitude':
-                        tup_lat = gps_dado
-                    if GPSTAGS[gps_cod] == 'GPSLongitude':
-                        tup_lon = gps_dado
-                    if GPSTAGS[gps_cod] == 'GPSLatitudeRef':
-                        ref_lat = gps_dado
-                    if GPSTAGS[gps_cod] == 'GPSLongitudeRef':
-                        ref_lon = gps_dado
-
-                self._lat = converte_graus_para_decimais(tup_lat, ref_lat)
-                self._lon = converte_graus_para_decimais(tup_lon, ref_lon)
-
-                self._cidade = tkmv.convert_coordinates_to_city(self._lat, self._lon)
-                self._pais = tkmv.convert_coordinates_to_country(self._lat, self._lon)
-
-            if TAGS[c] == 'DateTime':
-                self._data = datetime.strptime(v, '%Y:%m:%d %H:%M:%S')
-
-    @staticmethod
-    def abre(nome: str) -> PIL.ImageFile:
-        '''
-        Abre imagem a partir de
-        arquivo com o nome
-        fornecido.
-        Retorna objeto imagem
-        aberto.
-        '''
-        img = Image.open(nome)
-        return img
+        try:
+            geotags = getGeotagging(exif_data)
+        except:
+            print(f"Erro ao processar geotags da imagem {self._nome}")
+        
+        try:
+            lat_lon = getLatLon(geotags)
+            self._lat = lat_lon[0]
+            self._lon = lat_lon[1]
+        except:
+            print(f"Erro ao processar latitude e longitude da imagem {self._nome}")
+            self._lat = -5.843139132505788 
+            self._lon = -35.199263651980374
+        
+        try:
+            date_time = getImageDateTime(exif_data)
+            self._data = datetime.strptime(date_time, '%Y:%m:%d %H:%M:%S').date()
+        except:
+            print(f"Imagem {self._nome} não possui data de captura")
+            self._data = datetime.now().date()
 
     @property
     def nome(self) -> str:
@@ -118,14 +86,14 @@ class Imagem:
         '''
         Retorna a largura da imagem.
         '''
-        return self._img.width
+        return self._arquivo.width
 
     @property
     def altura(self) -> int:
         '''
         Retorna a altura da imagem.
         '''
-        return self._img.height
+        return self._arquivo.height
 
     @property
     def tamanho(self) -> Tuple[int, int]:
@@ -133,7 +101,7 @@ class Imagem:
         Retorna o tamanho da imagem
         (tupla largura x altura).
         '''
-        return self._img.size
+        return self._arquivo.size
 
     @property
     def data(self) -> datetime:
@@ -142,6 +110,13 @@ class Imagem:
         foi capturada (objeto da classe datetime).
         '''
         return self._data
+
+    def getDataFormatada(self) -> str:
+        '''
+        Retorna a data em que a imagem
+        foi capturada (str no formato dd/mm/aaaa).
+        '''
+        return self._data.strftime("%d/%m/%Y")
 
     @property
     def latitude(self) -> float:
@@ -158,19 +133,47 @@ class Imagem:
         em que a imagem foi capturada
         '''
         return self._lon
+    
+    @property
+    def cidade(self) -> str:
+        if self._cidade is None:
+            cidadeEncontrada = tkmv.convert_coordinates_to_city(self.latitude, self.longitude)
+            if cidadeEncontrada is None:
+                self._cidade = "Sem cidade"
+            else:
+                self._cidade = cidadeEncontrada
+        
+        return self._cidade
+    
+    @property
+    def pais(self) -> str:
+        if self._pais is None:
+            self._pais = tkmv.convert_coordinates_to_country(self.latitude, self.longitude)
+        
+        return self._pais
+
+    @property
+    def arquivo(self) -> Image.Image:
+        '''
+        Retorna o objeto Image
+        correspondente à imagem.
+        '''
+        return self._arquivo
 
     def imprime_info(self) -> None:
         '''
         Imprime informações sobre
         a imagem.
         '''
-        print("Nome: ", self._nome)
-        print("Data de captura: ", self._data)
-        print("Latitude: ", self._lat)
-        print("Longitude: ", self._lon)
+        print("Nome: ", self.nome)
+        print("Data de captura: ", self.data)
+        print("Latitude: ", self.latitude)
+        print("Longitude: ", self.longitude)
         print("Altura: ", self.altura)
         print("Largura: ", self.largura)
         print("Tamanho: ", self.tamanho)
+        print("Cidade: ", self.cidade)
+        print("País: ", self.pais)
 
     def redimensiona(self, nv_lar: float, nv_alt: float) -> None:
         '''
@@ -179,8 +182,8 @@ class Imagem:
         nv_lar x nv_alt.
         '''
         novo_tamanho = (int(nv_lar), int(nv_alt))
-        self._img.resize(size=novo_tamanho)
-        self._img.save(self._nome)
+        self._arquivo.resize(size=novo_tamanho)
+        self._arquivo.save(self._nome)
 
 class BDImagens:
     '''
@@ -189,17 +192,16 @@ class BDImagens:
     (classe de busca do programa).
     '''
 
-    imagens: List[Imagem] = []
-
     def __init__(self, idx):
+        self.imagens: List[Imagem] = []
         self._idx = idx
+        self._processaImagens()
         
 
-    def processa(self) -> None:
+    def _processaImagens(self) -> None:
         with open(self._idx, 'r') as file:
             for line in file:
                 nome = line.strip()
-                print(f'Processando {nome}...')
                 imagem = Imagem(nome)
                 self.imagens.append(imagem)
 
@@ -209,7 +211,7 @@ class BDImagens:
         Retorna a quantidade de imagem
         no banco de dados.
         '''
-        return len(BDImagens.imagens)
+        return len(self.imagens)
 
     def todas(self) -> List[Imagem]:
         '''
@@ -217,7 +219,7 @@ class BDImagens:
         todas as imagens abertas
         no banco de dados.
         '''
-        return BDImagens.imagens
+        return self.imagens
 
     def busca_por_nome(self, texto: str) -> List[Imagem]:
         '''
@@ -227,78 +229,50 @@ class BDImagens:
         como parâmetro.
         '''
         imagens_encontradas = []
-        for imagem in BDImagens.imagens:
+        for imagem in self.imagens:
             if texto.lower() in imagem.nome.lower():
                 imagens_encontradas.append(imagem)
         return imagens_encontradas
-
-    @staticmethod
-    def busca_por_data(dini: datetime.date, dfim: datetime.date) -> List[Imagem]:
+    
+    def busca_por_data(self, dini: datetime.date, dfim: datetime.date, cidadeBusca: str = None, paisBusca: str = None) -> List[Imagem]:
         '''
         Retorna uma lista contendo
         todas as imagens do banco de dados
         cuja data de captura encontra-se entre
-        dini (data inicial) e dfim (data final).
+        dini (data inicial) e dfim (data final), filtrando por cidade ou país caso seja passado como parâmetro.
         '''
         imagens_encontradas = []
-        for imagem in BDImagens.imagens:
-            if dini <= imagem.data.date <= dfim:
-                imagens_encontradas.append(imagem)     
+        for imagem in self.imagens:
+            if dini <= imagem.data <= dfim:
+                if cidadeBusca is not None and cidadeBusca.lower() in imagem.cidade.lower():
+                    imagens_encontradas.append(imagem)
+                elif paisBusca is not None and paisBusca.lower() in imagem.pais.lower():
+                    imagens_encontradas.append(imagem)
+                else:
+                    imagens_encontradas.append(imagem)
         return imagens_encontradas
+        
     
-    @staticmethod
-    def busca_por_cidade(cidade: str) -> List[Imagem]:
+    def busca_por_cidade(self, cidade: str) -> List[Imagem]:
         '''
         Retorna uma lista contendo
         todas as imagens do banco de dados
         cuja cidade de captura é cidade.
         '''
         imagens_encontradas = []
-        for imagem in BDImagens.imagens:
-            if cidade.lower() in imagem._cidade.lower():
+        for imagem in self.imagens:
+            if cidade.lower() in imagem.cidade.lower():
                 imagens_encontradas.append(imagem)
         return imagens_encontradas
 
-    @staticmethod
-    def busca_por_pais(pais: str) -> List[Imagem]:
+    def busca_por_pais(self, pais: str) -> List[Imagem]:
         '''
         Retorna uma lista contendo
         todas as imagens do banco de dados
         cujo país de captura é pais.
         '''
         imagens_encontradas = []
-        for imagem in BDImagens.imagens:
-            if pais.lower() in imagem._pais.lower():
+        for imagem in self.imagens:
+            if pais.lower() in imagem.pais.lower():
                 imagens_encontradas.append(imagem)
         return imagens_encontradas
-
-# def main():
-
-#     bd = BDImagens('dataset1/index')
-#     bd.processa()
-
-#     # Mostra as informações de todas as imagens do banco de dados
-#     print('Imagens do Banco de Dados:')
-#     for img in bd.todas():
-#         img.imprime_info()
-
-#     # Mostra os nomes das imagens que possuam texto no seu nome
-#     texto = '06'
-#     for img in bd.busca_por_nome(texto):
-#         print(img.nome)
-
-#     # Mostra as datas das imagens capturadas entre d1 e d2
-#     d1 = datetime(2021, 1, 1)
-#     d2 = datetime(2023, 1, 1)
-#     for img in bd.busca_por_data(d1, d2):
-#         print(img.data)
-
-# if __name__ == '__main__':
-#     main()
-
-
-
-    # self._lat = None # latitude da captura da imagem
-    # self._lon = None # longitude da captura da imagem
-    # self._cidade = None # cidade da captura da imagem
-    # self._pais = None # país da captura da imagem
